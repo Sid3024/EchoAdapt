@@ -1,5 +1,6 @@
 import numpy as np
 import birdnet
+import tensorflow as tf
 
 from src.data_io.audio import load_audio, chunk_audio, SAMPLE_RATE, CHUNK_DURATION
 
@@ -20,6 +21,9 @@ class BirdNetEmbedder:
     def __init__(self, version: str = "2.4", backend: str = "tf"):
         # backend: "tf" (TensorFlow SavedModel, supports GPU) or "pb" (ProtoBuf)
         self.model = birdnet.load("acoustic", version, backend)
+        gpus = tf.config.list_physical_devices("GPU")
+        device = f"GPU ({gpus[0].name})" if gpus else "CPU"
+        print(f"BirdNetEmbedder: running on {device}")
 
     def embed_file(
         self,
@@ -39,17 +43,14 @@ class BirdNetEmbedder:
         audio = load_audio(filepath)
         chunks = chunk_audio(audio, sr=SAMPLE_RATE, chunk_duration=chunk_duration)
 
-        embeddings = []
-        for chunk in chunks:
-            # encode_arrays takes (audio_array, sample_rate) — no temp files needed
-            result = self.model.encode_arrays((chunk, SAMPLE_RATE))
-            # result.embeddings shape: (n_inputs=1, n_internal_segments, 1024)
-            # result.embeddings_masked: True where a value is padding/invalid
-            segs = result.embeddings[0]        # (n_segs, 1024)
-            mask = result.embeddings_masked[0] # (n_segs, 1024) bool
-            valid = ~mask.all(axis=1)          # (n_segs,) — drop fully-padded segments
-            valid_segs = segs[valid] if valid.any() else segs
-            embeddings.append(valid_segs)
+        # batch all chunks in one GPU call instead of N separate calls
+        result = self.model.encode_arrays(*[(chunk, SAMPLE_RATE) for chunk in chunks])
 
-        # (n_chunks, n_internal_segs, 1024) — caller max-pools after classification
+        embeddings = []
+        for i in range(len(chunks)):
+            segs = result.embeddings[i]         # (n_segs, 1024)
+            mask = result.embeddings_masked[i]  # (n_segs, 1024) bool
+            valid = ~mask.all(axis=1)
+            embeddings.append(segs[valid] if valid.any() else segs)
+
         return embeddings

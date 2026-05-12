@@ -2,7 +2,7 @@ import numpy as np
 import librosa
 
 SAMPLE_RATE = 48000
-CHUNK_DURATION = 5.0  # seconds — matches BirdCLEF submission row IDs (_5, _10, …)
+CHUNK_DURATION = 3.0  # seconds — matches BirdCLEF submission row IDs (_5, _10, …)
 
 
 def load_audio(filepath: str, target_sr: int = SAMPLE_RATE) -> np.ndarray:
