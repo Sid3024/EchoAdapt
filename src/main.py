@@ -6,6 +6,6 @@ if __name__ == "__main__":
     embedder = BirdNetEmbedder()
     embeddings = embedder.embed_file(FILE)
 
-    print(f"File:            {FILE}")
-    print(f"Embedding shape: {embeddings.shape}")  # (n_chunks, 1024)
-    print(f"First vector:    {embeddings[0]}")
+    print(f"File:          {FILE}")
+    print(f"Chunks:        {len(embeddings)}, each {embeddings[0].shape}")
+    print(f"First vector:  {embeddings[0][0]}")
