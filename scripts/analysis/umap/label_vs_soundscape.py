@@ -7,15 +7,16 @@ from src.data_io.cache import load_or_embed
 from src.visualize.umap_plot import compute_umap, plot_umap
 from src.visualize.run_log import next_run_id, log_run
 
-# for actual umap use:
 FOLDER_A = "data/birdclef-2026/train_audio"
 FOLDER_B = "data/birdclef-2026/train_soundscapes"
+BATCH_SIZE = 512   # audio chunks per GPU batch
+CACHE_EVERY_N = 5  # save checkpoint every N batches
 
 if __name__ == "__main__":
     embedder = BirdNetEmbedder()
 
-    emb_a, _ = load_or_embed(FOLDER_A, embedder)
-    emb_b, _ = load_or_embed(FOLDER_B, embedder)
+    emb_a, _ = load_or_embed(FOLDER_A, embedder, batch_size=BATCH_SIZE, cache_every_n=CACHE_EVERY_N)
+    emb_b, _ = load_or_embed(FOLDER_B, embedder, batch_size=BATCH_SIZE, cache_every_n=CACHE_EVERY_N)
 
     all_emb = np.concatenate([emb_a, emb_b])
     labels = [Path(FOLDER_A).name] * len(emb_a) + [Path(FOLDER_B).name] * len(emb_b)
