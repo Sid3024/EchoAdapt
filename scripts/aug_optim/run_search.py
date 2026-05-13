@@ -1,42 +1,73 @@
 """Entry point for the augmentation search pipeline.
 
-Run steps in order (each step saves to disk so you can resume):
+Smoke test (uses data/test/labelled and data/test/soundscape):
+  python -m scripts.aug_optim.run_search --preset test --step all
 
-  Step 1 — embed labelled + soundscape data (requires GPU):
-    python -m src.search.run --step embed
+Full run:
+  python -m scripts.aug_optim.run_search --preset full --step all
 
-  Step 2 — prepare fixed search subsample from saved embeddings:
-    python -m src.search.run --step prepare
+Run individual steps:
+  --step embed    embed both labelled and soundscape dirs
+  --step prepare  subsample soundscape embeddings + cache labelled audio chunks
+  --step search   run Bayesian optimisation
+  --step all      embed → prepare → search in sequence
 
-  Step 3 — run Bayesian optimisation (requires GPU for BirdNET):
-    python -m src.search.run --step search
+Edit RunConfig.test() / RunConfig.full() in src/config/run.py to change parameters.
 """
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
-from src.config import EmbeddingConfig, AugmentSearchConfig, SearchConfig
-from src.search.embed import embed_labelled, embed_soundscapes, prepare_search_data, load_search_data
+from src.config import AugmentSearchConfig, EmbeddingConfig, SearchConfig
+from src.config.run import RunConfig
+from src.search.embed import (
+    embed_soundscapes,
+    load_search_data,
+    prepare_search_data,
+)
 from src.search.optimize import run_search
 
 
-def get_configs():
-    return EmbeddingConfig(), AugmentSearchConfig(), SearchConfig()
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Augmentation Bayesian search")
+    p.add_argument("--preset", choices=["test", "full"], default="full",
+                   help="Configuration preset (default: full)")
+    p.add_argument("--step", choices=["embed", "prepare", "search", "all"],
+                   required=True)
+    return p.parse_args()
+
+
+def build_configs(run: RunConfig) -> tuple[EmbeddingConfig, AugmentSearchConfig, SearchConfig]:
+    emb = EmbeddingConfig(
+        labelled_dir=run.labelled_dir,
+        soundscape_dir=run.soundscape_dir,
+        output_dir=run.output_dir,
+    )
+    search = SearchConfig(
+        n_trials=run.n_trials,
+        n_initial_trials=run.n_initial_trials,
+        n_audio_files=run.n_audio_files,
+        subsample_n=run.subsample_n,
+        stability_lambda=run.stability_lambda,
+        seed=run.seed,
+    )
+    return emb, AugmentSearchConfig(), search
 
 
 def step_embed(emb_config: EmbeddingConfig) -> None:
     from src.models.birdnet import BirdNetEmbedder
     embedder = BirdNetEmbedder(version=emb_config.model_version, backend=emb_config.backend)
-    print("=== Embedding labelled data ===")
-    embed_labelled(emb_config, embedder)
     print("=== Embedding soundscapes ===")
     embed_soundscapes(emb_config, embedder)
 
 
 def step_prepare(emb_config: EmbeddingConfig, search_config: SearchConfig) -> None:
     print("=== Preparing search subsample ===")
-    prepare_search_data(emb_config, search_config)
+    labelled_chunks, sc_emb = prepare_search_data(emb_config, search_config)
+    print(f"  labelled chunks : {labelled_chunks.shape}")
+    print(f"  soundscape embs : {sc_emb.shape}")
 
 
 def step_search(
@@ -49,35 +80,43 @@ def step_search(
 
     print("=== Loading search data ===")
     labelled_chunks, soundscape_emb = load_search_data(emb_config)
-    print(f"  labelled chunks: {labelled_chunks.shape}, soundscape emb: {soundscape_emb.shape}")
+    print(f"  labelled chunks: {labelled_chunks.shape}  soundscape emb: {soundscape_emb.shape}")
 
-    print("=== Running Bayesian optimisation ===")
+    print(f"=== Running Bayesian optimisation ({search_config.n_trials} trials) ===")
     study = run_search(labelled_chunks, soundscape_emb, embedder, aug_config, search_config)
 
     out = Path(emb_config.output_dir)
-    results_path = out / "search_results.json"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_path = out / f"search_results_{timestamp}.json"
     results = {
         "best_score": study.best_value,
         "best_params": study.best_params,
+        "labelled_dir": emb_config.labelled_dir,
+        "soundscape_dir": emb_config.soundscape_dir,
+        "search_config": {
+            "n_trials": search_config.n_trials,
+            "n_audio_files": search_config.n_audio_files,
+            "subsample_n": search_config.subsample_n,
+            "stability_lambda": search_config.stability_lambda,
+        },
         "all_trials": [
             {"number": t.number, "score": t.value, "params": t.params}
             for t in study.trials
         ],
     }
+    out.mkdir(parents=True, exist_ok=True)
     results_path.write_text(json.dumps(results, indent=2))
     print(f"\nResults saved to {results_path}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--step", choices=["embed", "prepare", "search"], required=True)
-    args = parser.parse_args()
+    args = parse_args()
+    run = RunConfig.test() if args.preset == "test" else RunConfig.full()
+    emb_config, aug_config, search_config = build_configs(run)
 
-    emb_config, aug_config, search_config = get_configs()
-
-    if args.step == "embed":
+    if args.step in ("embed", "all"):
         step_embed(emb_config)
-    elif args.step == "prepare":
+    if args.step in ("prepare", "all"):
         step_prepare(emb_config, search_config)
-    elif args.step == "search":
+    if args.step in ("search", "all"):
         step_search(emb_config, aug_config, search_config)

@@ -13,8 +13,8 @@ Score = coverage + lambda * stability
   lambda:    hand-tunable weight in [0, 1]. Coverage always dominates.
 """
 
+import faiss
 import numpy as np
-from sklearn.metrics import pairwise_distances_argmin_min
 
 
 def one_sided_chamfer(source: np.ndarray, target: np.ndarray) -> float:
@@ -27,8 +27,12 @@ def one_sided_chamfer(source: np.ndarray, target: np.ndarray) -> float:
     Returns:
         Scalar mean nearest-neighbour distance.
     """
-    _, dists = pairwise_distances_argmin_min(source, target, metric="euclidean")
-    return float(np.mean(dists))
+    source = np.ascontiguousarray(source, dtype=np.float32)
+    target = np.ascontiguousarray(target, dtype=np.float32)
+    index = faiss.IndexFlatL2(target.shape[1])
+    index.add(target)
+    sq_dists, _ = index.search(source, 1)
+    return float(np.sqrt(sq_dists[:, 0]).mean())
 
 
 def chamfer_score(

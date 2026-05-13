@@ -73,6 +73,7 @@ def evaluate_trial(
     trial: optuna.Trial,
     labelled_chunks: np.ndarray,
     soundscape_emb: np.ndarray,
+    session,
     embedder,
     aug_config: AugmentSearchConfig,
     search_config: SearchConfig,
@@ -90,8 +91,9 @@ def evaluate_trial(
             aug = overlay(aug, labelled_chunks[other_idx], snr_db=snr_overlay)
 
         augmented.append(aug)
+    print(f"  trial {trial.number:>3d} | embedding {len(augmented)} augmented chunks...", flush=True)
 
-    encoded = embedder.encode_chunks(augmented)
+    encoded = embedder.encode_chunks_with_session(session, augmented)
     labelled_emb = np.vstack(encoded)  # (total_segs, 1024)
 
     score = chamfer_score(labelled_emb, soundscape_emb, search_config.stability_lambda)
@@ -108,15 +110,17 @@ def run_search(
 ) -> optuna.Study:
     """Run Bayesian optimisation and return the completed Optuna study."""
 
-    def objective(trial: optuna.Trial) -> float:
-        return evaluate_trial(trial, labelled_chunks, soundscape_emb, embedder, aug_config, search_config)
-
     sampler = optuna.samplers.TPESampler(
         n_startup_trials=search_config.n_initial_trials,
         seed=search_config.seed,
     )
     study = optuna.create_study(direction="minimize", sampler=sampler)
-    study.optimize(objective, n_trials=search_config.n_trials)
+
+    with embedder.open_session(batch_size=len(labelled_chunks)) as session:
+        def objective(trial: optuna.Trial) -> float:
+            return evaluate_trial(trial, labelled_chunks, soundscape_emb, session, embedder, aug_config, search_config)
+
+        study.optimize(objective, n_trials=search_config.n_trials)
 
     print(f"\nBest score:  {study.best_value:.4f}")
     print(f"Best params: {study.best_params}")

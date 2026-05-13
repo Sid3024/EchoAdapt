@@ -15,11 +15,13 @@ def load_or_embed(
     embedder: "BirdNetEmbedder",
     batch_size: int = 64,
     cache_every_n: int = 10,
+    cache_dir: Path | None = None,
 ) -> tuple[np.ndarray, list[dict]]:
     """Return embeddings for all .ogg files under folder, using disk cache if available."""
+    out = cache_dir if cache_dir is not None else CACHE_DIR
     name = Path(folder).name
-    emb_path = CACHE_DIR / f"{name}.npy"
-    meta_path = CACHE_DIR / f"{name}_meta.json"
+    emb_path = out / f"{name}.npy"
+    meta_path = out / f"{name}_meta.json"
 
     if emb_path.exists() and meta_path.exists():
         print(f"Loading cached embeddings for '{name}'...")
@@ -29,7 +31,7 @@ def load_or_embed(
     print(f"Embedding '{name}'...")
     emb, meta = embed_folder(folder, embedder, batch_size=batch_size, cache_every_n=cache_every_n)
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     np.save(emb_path, emb)
     meta_path.write_text(json.dumps(meta))
     print(f"Cached to {emb_path}")

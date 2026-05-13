@@ -26,7 +26,10 @@ def embed_labelled(emb_config: EmbeddingConfig, embedder) -> np.ndarray:
     Returns:
         np.ndarray of shape (total_segments, 1024)
     """
-    emb, _ = load_or_embed(emb_config.labelled_dir, embedder, batch_size=emb_config.batch_size)
+    emb, _ = load_or_embed(
+        emb_config.labelled_dir, embedder,
+        batch_size=emb_config.batch_size, cache_dir=Path(emb_config.output_dir),
+    )
     return emb
 
 
@@ -36,7 +39,10 @@ def embed_soundscapes(emb_config: EmbeddingConfig, embedder) -> np.ndarray:
     Returns:
         np.ndarray of shape (total_segments, 1024)
     """
-    emb, _ = load_or_embed(emb_config.soundscape_dir, embedder, batch_size=emb_config.batch_size)
+    emb, _ = load_or_embed(
+        emb_config.soundscape_dir, embedder,
+        batch_size=emb_config.batch_size, cache_dir=Path(emb_config.output_dir),
+    )
     return emb
 
 
