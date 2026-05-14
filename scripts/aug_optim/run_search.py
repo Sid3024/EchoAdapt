@@ -17,8 +17,13 @@ Edit RunConfig.test() / RunConfig.full() in src/config/run.py to change paramete
 
 import argparse
 import json
+import os
 from datetime import datetime
 from pathlib import Path
+
+# must be set before TF/BirdNET is imported
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ.setdefault("GLOG_minloglevel", "3")
 
 from src.config import AugmentSearchConfig, EmbeddingConfig, SearchConfig
 from src.config.run import RunConfig
@@ -49,6 +54,7 @@ def build_configs(run: RunConfig) -> tuple[EmbeddingConfig, AugmentSearchConfig,
         n_trials=run.n_trials,
         n_initial_trials=run.n_initial_trials,
         n_audio_files=run.n_audio_files,
+        file_batch_size=run.file_batch_size,
         subsample_n=run.subsample_n,
         stability_lambda=run.stability_lambda,
         seed=run.seed,
@@ -65,8 +71,8 @@ def step_embed(emb_config: EmbeddingConfig) -> None:
 
 def step_prepare(emb_config: EmbeddingConfig, search_config: SearchConfig) -> None:
     print("=== Preparing search subsample ===")
-    labelled_chunks, sc_emb = prepare_search_data(emb_config, search_config)
-    print(f"  labelled chunks : {labelled_chunks.shape}")
+    file_paths, sc_emb = prepare_search_data(emb_config, search_config)
+    print(f"  labelled files  : {len(file_paths)}")
     print(f"  soundscape embs : {sc_emb.shape}")
 
 
@@ -79,11 +85,11 @@ def step_search(
     embedder = BirdNetEmbedder(version=emb_config.model_version, backend=emb_config.backend)
 
     print("=== Loading search data ===")
-    labelled_chunks, soundscape_emb = load_search_data(emb_config)
-    print(f"  labelled chunks: {labelled_chunks.shape}  soundscape emb: {soundscape_emb.shape}")
+    file_paths, soundscape_emb = load_search_data(emb_config)
+    print(f"  labelled files: {len(file_paths)}  soundscape emb: {soundscape_emb.shape}")
 
     print(f"=== Running Bayesian optimisation ({search_config.n_trials} trials) ===")
-    study = run_search(labelled_chunks, soundscape_emb, embedder, aug_config, search_config)
+    study = run_search(file_paths, soundscape_emb, embedder, aug_config, search_config)
 
     out = Path(emb_config.output_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

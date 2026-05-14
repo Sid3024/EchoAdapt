@@ -17,6 +17,7 @@ from src.augment import (
 )
 from src.config.augment import AugmentSearchConfig
 from src.config.search import SearchConfig
+from src.data_io.audio import load_audio, chunk_audio, SAMPLE_RATE, CHUNK_DURATION
 from src.search.score import chamfer_score
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -71,38 +72,62 @@ def build_pipeline(trial: optuna.Trial, aug_config: AugmentSearchConfig) -> Comp
 
 def evaluate_trial(
     trial: optuna.Trial,
-    labelled_chunks: np.ndarray,
+    file_paths: list[str],
     soundscape_emb: np.ndarray,
     session,
     embedder,
     aug_config: AugmentSearchConfig,
     search_config: SearchConfig,
 ) -> float:
-    """Augment labelled chunks, embed, compute chamfer score."""
+    """Augment labelled audio in batches, embed, compute chamfer score."""
     base_pipeline, p_overlay, snr_overlay = build_pipeline(trial, aug_config)
 
-    augmented = []
-    for i, chunk in enumerate(labelled_chunks):
-        aug = base_pipeline(chunk)
+    t = trial.number
+    params = trial.params
+    param_str = (
+        f"pink={params['p_pink']:.2f}  gauss={params['p_gauss']:.2f}  "
+        f"gain={params['p_gain']:.2f}  pitch={params['p_pitch']:.2f}  "
+        f"stretch={params['p_stretch']:.2f}  overlay={params['p_overlay']:.2f}"
+    )
+    print(f"  trial {t:>3d} | {param_str}", flush=True)
 
-        # overlay: mix with a randomly chosen other chunk from the pool
-        if np.random.random() < p_overlay:
-            other_idx = np.random.randint(0, len(labelled_chunks))
-            aug = overlay(aug, labelled_chunks[other_idx], snr_db=snr_overlay)
+    all_embeddings: list[np.ndarray] = []
+    n_batches = (len(file_paths) + search_config.file_batch_size - 1) // search_config.file_batch_size
+    total_chunks = 0
 
-        augmented.append(aug)
-    print(f"  trial {trial.number:>3d} | embedding {len(augmented)} augmented chunks...", flush=True)
+    for batch_idx in range(n_batches):
+        batch_paths = file_paths[batch_idx * search_config.file_batch_size:
+                                 (batch_idx + 1) * search_config.file_batch_size]
 
-    encoded = embedder.encode_chunks_with_session(session, augmented)
-    labelled_emb = np.vstack(encoded)  # (total_segs, 1024)
+        chunks: list[np.ndarray] = []
+        for path in batch_paths:
+            audio = load_audio(path)
+            chunks.extend(chunk_audio(audio, sr=SAMPLE_RATE, chunk_duration=CHUNK_DURATION))
+
+        augmented: list[np.ndarray] = []
+        for chunk in chunks:
+            aug = base_pipeline(chunk)
+            if np.random.random() < p_overlay:
+                other = chunks[np.random.randint(0, len(chunks))]
+                aug = overlay(aug, other, snr_db=snr_overlay)
+            augmented.append(aug)
+
+        encoded = embedder.encode_chunks_with_session(session, augmented)
+        all_embeddings.extend(encoded)
+        total_chunks += len(augmented)
+
+    print(f"  trial {t:>3d} | augmentation done  ({total_chunks} chunks, {n_batches} batches)", flush=True)
+
+    labelled_emb = np.vstack(all_embeddings)  # (total_segs, 1024)
+    print(f"  trial {t:>3d} | embedding done  ({labelled_emb.shape[0]} segments)", flush=True)
 
     score = chamfer_score(labelled_emb, soundscape_emb, search_config.stability_lambda)
-    print(f"  trial {trial.number:>3d} | score={score:.4f}", flush=True)
+    print(f"  trial {t:>3d} | score={score:.4f}", flush=True)
     return score
 
 
 def run_search(
-    labelled_chunks: np.ndarray,
+    file_paths: list[str],
     soundscape_emb: np.ndarray,
     embedder,
     aug_config: AugmentSearchConfig,
@@ -116,9 +141,9 @@ def run_search(
     )
     study = optuna.create_study(direction="minimize", sampler=sampler)
 
-    with embedder.open_session(batch_size=len(labelled_chunks)) as session:
+    with embedder.open_session(batch_size=search_config.file_batch_size * 20) as session:
         def objective(trial: optuna.Trial) -> float:
-            return evaluate_trial(trial, labelled_chunks, soundscape_emb, session, embedder, aug_config, search_config)
+            return evaluate_trial(trial, file_paths, soundscape_emb, session, embedder, aug_config, search_config)
 
         study.optimize(objective, n_trials=search_config.n_trials)
 

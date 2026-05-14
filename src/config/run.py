@@ -8,6 +8,7 @@ class RunConfig:
     output_dir: str
     n_trials: int
     n_audio_files: int
+    file_batch_size: int
     subsample_n: int
     stability_lambda: float = 0.3
     seed: int = 42
@@ -22,6 +23,7 @@ class RunConfig:
             n_trials=10,
             n_initial_trials=3,
             n_audio_files=5,
+            file_batch_size=2,
             subsample_n=20,
         )
 
@@ -33,5 +35,6 @@ class RunConfig:
             output_dir="data/embeddings",
             n_trials=50,
             n_audio_files=4000,
+            file_batch_size=50,
             subsample_n=50_000,
         )
